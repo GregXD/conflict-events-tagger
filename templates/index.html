@@ -5,17 +5,72 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>News Source Tagger</title>
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+       /* HTML: <div class="loader"></div> */
+            .loader {
+            width: 120px;
+            height: 22px;
+            border-radius: 20px;
+            color: #514b82;
+            border: 2px solid;
+            position: relative;
+            }
+            .loader::before {
+            content: "";
+            position: absolute;
+            margin: 2px;
+            inset: 0 100% 0 0;
+            border-radius: inherit;
+            background: currentColor;
+            animation: l6 2s infinite;
+            }
+            @keyframes l6 {
+                100% {inset:0}
+            }
+    </style>
 </head>
 <body>
     <div class="container">
         <h1 class="mt-5">News Source Tagger</h1>
-        <form method="POST" class="mt-3">
+        <form id="tag-form" method="POST" class="mt-3">
             <div class="form-group">
                 <label for="url">Enter News Source URL:</label>
                 <input type="url" class="form-control" id="url" name="url" required>
             </div>
             <button type="submit" class="btn btn-primary">Tag News Source</button>
         </form>
+        <div id="spinner" style="display: none;">
+            <div class="loader"></div>
+        </div>
+        <div id="result"></div>
     </div>
+
+    <script>
+        $(document).ready(function() {
+            $('#tag-form').on('submit', function(event) {
+                event.preventDefault();
+                $('#spinner').show();
+                $('#result').empty();
+                $.ajax({
+                    url: '/',  // Replace with your Flask route
+                    method: 'POST',
+                    data: $(this).serialize(),
+                    success: function(data) {
+                        console.log('Response:', data);  // Debugging line
+                        $('#spinner').hide();
+                        const resultContent = data.result;
+                        document.getElementById('result').innerHTML = marked.parse(resultContent);
+                    },
+                    error: function(xhr, status, error) {
+                        console.error('Error:', error);  // Debugging line
+                        $('#spinner').hide();
+                        $('#result').html('<div class="alert alert-danger">An error occurred. Please try again.</div>');
+                    }
+                });
+            });
+        });
+    </script>
 </body>
 </html>

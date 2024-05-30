@@ -1,10 +1,15 @@
-from flask import Flask, request, render_template
+from flask import Flask, request, jsonify, render_template
 from langchain_community.document_loaders import WebBaseLoader
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 from langchain_community.chat_models import ChatOpenAI
 import os
+import logging
+
 app = Flask(__name__)
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
 
 os.environ["OPENAI_API_KEY"] = "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"
 
@@ -45,11 +50,11 @@ LATITUDE	Latitude coordinate of the event location in four decimal degrees notat
 LONGITUDE	Longitude coordinate of the event location in four decimal degrees notation (e.g., 39.8588).
 GEO_PRECISION	Numeric code (1-3) indicating the level of certainty of the location recorded for the event: 1 = exact location, 2 = approximate location, 3 = broad location.
 SOURCE:	Sources used to record the event, separated by a semicolon.
-SOURCE_SCALE:	Geographic closeness of the sources to the event (e.g., Local partner, National).
-NOTES:	Two Sentence description of the event.
-FATALITIES	Number of reported fatalities resulting from the event.
-TAGS	Additional structured information about the event, separated by a semicolon.
-TIMESTAMP	Unix timestamp representing the exact date and time the event was uploaded to the ACLED API.
+SOURCE_SCALE: Geographic closeness of the sources to the event (e.g., Local partner, National).
+NOTES: Two Sentence description of the event.
+FATALITIES Number of reported fatalities resulting from the event.
+TAGS Additional structured information about the event, separated by a semicolon.
+TIMESTAMP Unix timestamp representing the exact date and time the event was uploaded to the ACLED API.
 Text: {text}
 
 Output:""",
@@ -67,8 +72,10 @@ Output:""",
 def index():
     if request.method == 'POST':
         url = request.form['url']
+        logging.debug(f"Received URL: {url}")
         result = tag_news_source(url)
-        return render_template('result.html', result=result)
+        logging.debug(f"Result: {result}")
+        return jsonify(result=result)
     return render_template('index.html')
 
 if __name__ == '__main__':
