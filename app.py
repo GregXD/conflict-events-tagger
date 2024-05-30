@@ -21,7 +21,7 @@ def tag_news_source(url):
 
     # Define the prompt template
     prompt = PromptTemplate(
-        template="""When given a news source, tag the news source by the following fields. Provide the output as a table:
+        template="""You are a bot designed to analyze conflict events as reported in the news. When given a news source, tag the news source by the following fields. If the source provided does not appear to be about a conflict event, tell the user. Provide the output as a markdown table:
 
 Field	Description
 EVENT_ID_CNTY	Unique identifier for each event, consisting of a number and country acronym.
