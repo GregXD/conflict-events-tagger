@@ -1,9 +1,8 @@
 from flask import Flask, request, render_template
-from langchain.document_loaders import WebBaseLoader
+from langchain_community.document_loaders import WebBaseLoader
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 from langchain_community.chat_models import ChatOpenAI
-
 import os
 app = Flask(__name__)
 
@@ -53,8 +52,7 @@ TAGS	Additional structured information about the event, separated by a semicolon
 TIMESTAMP	Unix timestamp representing the exact date and time the event was uploaded to the ACLED API.
 Text: {text}
 
-Output:
-""",
+Output:""",
         input_variables=["text"],
     )
 
