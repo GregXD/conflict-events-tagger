@@ -1,4 +1,3 @@
-```markdown
 # Conflict Events Tagger
 
 This Flask application tags conflict events reported in the news using an AI model from OpenAI. The application takes a URL as input, extracts the content, and returns structured information about the conflict event in a markdown table format.
