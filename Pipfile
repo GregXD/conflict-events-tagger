@@ -58,6 +58,15 @@ typing-extensions = "==4.12.0"
 urllib3 = "==2.2.1"
 werkzeug = "==3.0.3"
 yarl = "==1.9.4"
+distlib = "==0.3.8"
+filelock = "==3.14.0"
+pbr = "==6.0.0"
+pipenv = "==2023.12.1"
+pipenv-to-requirements = "==0.9.0"
+platformdirs = "==4.2.2"
+python-dotenv = "==1.0.1"
+tabulate = "==0.9.0"
+virtualenv = "==20.26.2"
 
 [dev-packages]
 
