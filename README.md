@@ -77,18 +77,3 @@ The application will fetch the content from the URL, analyze it, and return the 
 ## Example
 
 To tag a news source, enter a URL in the form on the web interface. The output will be a markdown table with detailed information about the conflict event, including event ID, date, location, actors involved, and more.
-
-## Logging
-
-The application uses Python's built-in logging module to log debug information. Logs can be found in the console where the application is running.
-
-## Contributing
-
-Contributions are welcome! Please fork the repository and submit a pull request.
-
-## License
-
-This project is licensed under the MIT License.
-```
-
-This `README.md` provides an overview of the project, installation instructions, usage details, and other relevant information to help users get started with your application.
