@@ -73,7 +73,8 @@ Output:""",
     llm = AzureChatOpenAI(
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-        azure_deployment=os.environ["AZURE_OPENAI_DEPLYMENTNAME"],
+        azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENTNAME"],
+        model_name="gpt-4o"
     )
 
     # Create the LLMChain
