@@ -11,7 +11,10 @@ app = Flask(__name__)
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 
-os.environ["OPENAI_API_KEY"] = "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"
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    raise ValueError("The OPENAI_API_KEY environment variable is not set.")
+os.environ["OPENAI_API_KEY"] = api_key
 
 def tag_news_source(url):
     # Load the text content from the URL
