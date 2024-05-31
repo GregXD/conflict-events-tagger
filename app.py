@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, render_template
 from langchain_community.document_loaders import WebBaseLoader
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
-from langchain_community.chat_models import AzureChatOpenAI 
+from langchain_community.chat_models import ChatOpenAI 
 import os
 import logging
 from dotenv import load_dotenv
@@ -13,10 +13,10 @@ load_dotenv()
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 
-api_key = os.getenv("AZURE_OPENAI_API_KEY")
+api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
-    raise ValueError("The AZURE_OPENAI_API_KEY environment variable is not set.")
-os.environ["AZURE_OPENAI_API_KEY"] = api_key
+    raise ValueError("OPENAI_API_KEY environment variable is not set.")
+os.environ["OPENAI_API_KEY"] = api_key
 
 def tag_news_source(url):
     # Load the text content from the URL
@@ -66,17 +66,9 @@ Output:""",
         input_variables=["text"],
     )
 
-    # Initialize the OpenAI language model
-    # llm = ChatOpenAI(model_name="gpt-4o", temperature=0.7, max_tokens=2048)
-    # chain = LLMChain(prompt=prompt, llm=llm)
-    # Initialize the Azure OpenAI language model
-    llm = AzureChatOpenAI(
-        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-        azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENTNAME"],
-        model_name="gpt-4o"
-    )
-
+    llm = ChatOpenAI(model_name="gpt-4o", temperature=0.7, max_tokens=2048)
+    chain = LLMChain(prompt=prompt, llm=llm)
+ 
     # Create the LLMChain
     chain = LLMChain(prompt=prompt, llm=llm)
         # Run the chain and return the output
