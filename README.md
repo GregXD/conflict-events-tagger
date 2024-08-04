@@ -19,11 +19,6 @@ Conflict_Tagger/
 ├── app.py                 # Main Streamlit application file
 ├── requirements.txt       # Python dependencies
 ├── conflict_events.db     # SQLite database for storing event data
-├── country_coordinates.py # Dictionary of country coordinates for mapping
-│
-├── templates/
-│   └── index.html         # HTML template for the web interface
-│
 └── README.md              # Project documentation (this file)
 ```
 
