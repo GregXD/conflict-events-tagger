@@ -723,8 +723,29 @@ def main():
             "estimates the number of fatalities, and provides a brief summary. "
             "Enter a URL of a news article to get started."
         )
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("© 2024 Exchange.Design")
+
+        # Add Font Awesome CSS
+        st.sidebar.markdown(
+            """
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+            """,
+            unsafe_allow_html=True
+        )
+
+        # Add GitHub and Company Homepage links with icons side by side
+        st.sidebar.markdown(
+            """
+            <div style="display: flex; justify-content: space-around;">
+                <a href="https://github.com/GregXD/conflict-events-tagger" target="_blank" style="text-decoration: none; color: white;">
+                    <i class="fab fa-github" style="font-size: 24px;"></i>
+                </a>
+                <a href="https://www.exchange.design" target="_blank" style="text-decoration: none; color: white;">
+                    <i class="fas fa-home" style="font-size: 24px;"></i>
+                </a>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
     except Exception as e:
         logger.exception("An unexpected error occurred")
