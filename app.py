@@ -22,10 +22,6 @@ from datetime import datetime
 
 st.set_page_config(page_title="Conflict Event Tagger", page_icon="xd_logo.png", layout="wide")
 
-# Theme toggle
-if 'theme' not in st.session_state:
-    st.session_state.theme = 'dark'
-
 # Constants and Configuration
 DATABASE_NAME = os.path.join(os.path.dirname(__file__), 'conflict_events.db')
 COHERE_MODEL_ID = os.getenv("EVENT_CLASSIFICATION_MODEL_ID")
