@@ -98,7 +98,7 @@ This project is licensed under the MIT License - see the `LICENSE` file for deta
 
 ## Acknowledgments
 
-- OpenAI for providing the GPT model
+- Various events tagging organizations for providing a framework for the experiment
 - Cohere for their NLP capabilities
 - Streamlit for the web application framework
 - Folium and Plotly for data visualization
