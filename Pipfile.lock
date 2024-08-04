@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "c0bfc008813cd4addcb20c6eb185075d6d31c4fe61bfe8e2b564de19a453257c"
+            "sha256": "917fab5b956490e4fdcfc5abbc0bf9c30c5cb0a3f3d0845f56385a21643918e7"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -356,6 +356,14 @@
             "index": "pypi",
             "markers": "python_version >= '3.6'",
             "version": "==1.9.0"
+        },
+        "fake-useragent": {
+            "hashes": [
+                "sha256:57415096557c8a4e23b62a375c21c55af5fd4ba30549227f562d2c4f5b60e3b3",
+                "sha256:6387269f5a2196b5ba7ed8935852f75486845a1c95c50e72460e6a8e762f5c49"
+            ],
+            "index": "pypi",
+            "version": "==1.5.1"
         },
         "fastavro": {
             "hashes": [
