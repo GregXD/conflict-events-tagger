@@ -1,6 +1,6 @@
 # Conflict Events Tagger
 
-This Streamlit application tags and visualizes conflict events reported in the news using fine tunes AI models from Cohere. The application extracts content from given URLs, analyzes the text to identify conflict event details, and presents the information through an interactive dashboard.
+This Streamlit application tags and visualizes conflict events reported in the news using fine tuned AI models from Cohere. The application extracts content from given URLs, analyzes the text to identify conflict event details, and presents the information through an interactive dashboard.
 
 ## Features
 
