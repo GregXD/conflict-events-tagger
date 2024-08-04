@@ -1,45 +1,137 @@
-# MIT License
-#
-# Copyright (c) 2024 Exchange.Design
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
-
-from flask import Flask, request, jsonify, render_template
+import streamlit as st
 from langchain_community.document_loaders import WebBaseLoader
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
-from langchain_community.chat_models import ChatOpenAI 
+import cohere
 import os
-import logging
 from dotenv import load_dotenv
+import re
+import sqlite3
+from datetime import datetime
+import pandas as pd
+import plotly.express as px
+import folium
+from streamlit_folium import folium_static
+from geopy.geocoders import Nominatim
+from folium.plugins import MarkerCluster
+from branca.colormap import LinearColormap
 
-app = Flask(__name__)
+# Load environment variables
 load_dotenv()
 
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
+# Set up Cohere API key
+cohere_api_key = os.getenv("COHERE_API_KEY")
+if not cohere_api_key:
+    st.error("COHERE_API_KEY environment variable is not set.")
+    st.stop()
 
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    raise ValueError("OPENAI_API_KEY environment variable is not set.")
-os.environ["OPENAI_API_KEY"] = api_key
+co = cohere.Client(cohere_api_key)
+
+# Set up SQLite database
+conn = sqlite3.connect('conflict_events.db')
+c = conn.cursor()
+
+# Create table if it doesn't exist
+c.execute('''CREATE TABLE IF NOT EXISTS events
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              url TEXT,
+              event_type TEXT,
+              confidence REAL,
+              country TEXT,
+              news_source TEXT,
+              fatalities TEXT,
+              summary TEXT,
+              timestamp DATETIME)''')
+conn.commit()
+
+def classify_event(text):
+    response = co.classify(
+        model='2fcfb5aa-5d0c-4758-ace5-ce80d13034fd-ft',
+        inputs=[text]
+    )
+    return response.classifications[0]
+
+def get_country(text):
+    prompt = f"""Based on the following news article, determine the country where the event occurred. Provide only the name of the country.
+
+News article:
+{text}
+
+Country:"""
+
+    response = co.generate(
+        model='command',
+        prompt=prompt,
+        max_tokens=20,
+        temperature=0.3,
+        k=0,
+        stop_sequences=[],
+        return_likelihoods='NONE'
+    )
+    return response.generations[0].text.strip()
+
+def get_news_source(text):
+    prompt = f"""Based on the following news article, determine the news source that published this article. Provide only the name of the news source.
+
+News article:
+{text}
+
+News Source:"""
+
+    response = co.generate(
+        model='command',
+        prompt=prompt,
+        max_tokens=20,
+        temperature=0.3,
+        k=0,
+        stop_sequences=[],
+        return_likelihoods='NONE'
+    )
+    return response.generations[0].text.strip()
+
+def get_fatalities(text):
+    prompt = f"""Based on the following news article, determine the number of recorded fatalities from the event described. Provide only the number as an integer. If the number is not specified or unclear, respond with "Unknown".
+
+News article:
+{text}
+
+Number of fatalities:"""
+
+    response = co.generate(
+        model='command',
+        prompt=prompt,
+        max_tokens=20,
+        temperature=0.3,
+        k=0,
+        stop_sequences=[],
+        return_likelihoods='NONE'
+    )
+    
+    result = response.generations[0].text.strip()
+    
+    # Try to extract an integer from the result
+    match = re.search(r'\d+', result)
+    if match:
+        return int(match.group())
+    else:
+        return "Unknown"
+
+def get_summary(text):
+    prompt = f"""Summarize the following news article about a conflict event in exactly two sentences. Focus on the key details of the event.
+
+News article:
+{text}
+
+Two-sentence summary:"""
+
+    response = co.generate(
+        model='command',
+        prompt=prompt,
+        max_tokens=100,
+        temperature=0.3,
+        k=0,
+        stop_sequences=[],
+        return_likelihoods='NONE'
+    )
+    return response.generations[0].text.strip()
 
 def tag_news_source(url):
     # Load the text content from the URL
@@ -47,66 +139,252 @@ def tag_news_source(url):
     docs = loader.load()
     text = "\n\n".join([doc.page_content for doc in docs])
 
-    # Define the prompt template
-    prompt = PromptTemplate(
-        template="""You are a bot designed to analyze conflict events as reported in the news. When given a news source, tag the news source by the following fields. If the source provided does not appear to be about a conflict event, tell the user. Provide the output as a markdown table:
+    # Classify the event
+    classification = classify_event(text)
 
-Field	Description
-EVENT_ID_CNTY	Unique identifier for each event, consisting of a number and country acronym.
-EVENT_DATE	Date when the event occurred, recorded as Year-Month-Day (e.g., 2023-02-16).
-YEAR	Year when the event occurred.
-TIME_PRECISION	Numeric code (1-3) indicating the level of precision of the event date: 1 = exact day, 2 = within a week, 3 = within a month.
-DISORDER_TYPE	Disorder category the event belongs to (e.g., Political violence, Demonstrations, Strategic developments).
-EVENT_TYPE	Category of the event (e.g., Battles, Riots).
-SUB_EVENT_TYPE	More specific categorization of the event (e.g., Armed clash, Peaceful protest).
-ACTOR1	Primary actor involved in the event.
-ASSOC_ACTOR_1	Associated actor(s) for the primary actor.
-INTER1	Numeric code (0-8) indicating the type of the primary actor.
-ACTOR2	Secondary actor involved in the event.
-ASSOC_ACTOR_2	Associated actor(s) for the secondary actor.
-INTER2	Numeric code (0-8) indicating the type of the secondary actor.
-INTERACTION	Two-digit numeric code combining the interaction codes of both actors.
-CIVILIAN_TARGETING	Indicates if civilians were targeted (e.g., Civilians targeted or blank).
-ISO	ISO country code.
-REGION	Geographical region of the event (e.g., Eastern Africa).
-COUNTRY	Country where the event occurred (e.g., Ethiopia).
-ADMIN1	First-level administrative division (e.g., state, province).
-ADMIN2	Second-level administrative division (e.g., county, district).
-ADMIN3	Third-level administrative division (e.g., sub-district).
-LOCATION	Specific location where the event occurred (e.g., Abomsa).
-LATITUDE	Latitude coordinate of the event location in four decimal degrees notation (e.g., 8.5907).
-LONGITUDE	Longitude coordinate of the event location in four decimal degrees notation (e.g., 39.8588).
-GEO_PRECISION	Numeric code (1-3) indicating the level of certainty of the location recorded for the event: 1 = exact location, 2 = approximate location, 3 = broad location.
-SOURCE:	Sources used to record the event, separated by a semicolon.
-SOURCE_SCALE: Geographic closeness of the sources to the event (e.g., Local partner, National).
-NOTES: Two Sentence description of the event.
-FATALITIES Number of reported fatalities resulting from the event.
-TAGS Additional structured information about the event, separated by a semicolon.
-TIMESTAMP Unix timestamp representing the exact date and time the event was uploaded to the ACLED API.
-Text: {text}
+    # Get the country
+    country = get_country(text)
 
-Output:""",
-        input_variables=["text"],
+    # Get the news source
+    news_source = get_news_source(text)
+
+    # Get the number of fatalities
+    fatalities = get_fatalities(text)
+
+    # Get the summary
+    summary = get_summary(text)
+
+    # Insert the results into the database
+    c.execute('''INSERT INTO events (url, event_type, confidence, country, news_source, fatalities, summary, timestamp)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+              (url, classification.prediction, classification.confidence, country, news_source, str(fatalities), summary, datetime.now()))
+    conn.commit()
+
+    # Create a markdown table with the results
+    result = f"""
+| Field | Value |
+|-------|-------|
+| Event Type | {classification.prediction} |
+| Confidence | {classification.confidence:.2f} |
+| Country | {country} |
+| News Source | {news_source} |
+| Fatalities | {fatalities} |
+| Summary | {summary} |
+"""
+    return result
+
+# Define a Gapminder-inspired color palette
+gapminder_colors = px.colors.qualitative.Set2
+
+def create_event_type_chart():
+    c.execute("SELECT event_type, COUNT(*) FROM events GROUP BY event_type")
+    data = c.fetchall()
+    df = pd.DataFrame(data, columns=['Event Type', 'Count'])
+    
+    fig = px.bar(df, x='Event Type', y='Count', text='Count',
+                 title='Distribution of Event Types',
+                 labels={'Count': 'Number of Events'},
+                 template='ggplot2',
+                 color='Event Type',
+                 color_discrete_sequence=gapminder_colors)
+    
+    fig.update_traces(texttemplate='%{text}', textposition='outside')
+    fig.update_layout(uniformtext_minsize=8, uniformtext_mode='hide')
+    fig.update_layout(showlegend=False)  # Hide legend as colors are self-explanatory
+    
+    return fig
+
+def create_fatalities_by_country_chart():
+    c.execute("SELECT country, SUM(CASE WHEN fatalities != 'Unknown' THEN CAST(fatalities AS INTEGER) ELSE 0 END) as total_fatalities FROM events GROUP BY country")
+    data = c.fetchall()
+    df = pd.DataFrame(data, columns=['Country', 'Total Fatalities'])
+    df = df.sort_values('Total Fatalities', ascending=False).head(10)  # Top 10 countries
+    
+    fig = px.bar(df, x='Country', y='Total Fatalities', text='Total Fatalities',
+                 title='Top 10 Countries by Fatalities',
+                 labels={'Total Fatalities': 'Number of Fatalities'},
+                 template='ggplot2',
+                 color='Country',
+                 color_discrete_sequence=gapminder_colors)
+    
+    fig.update_traces(texttemplate='%{text}', textposition='outside')
+    fig.update_layout(uniformtext_minsize=8, uniformtext_mode='hide')
+    fig.update_layout(showlegend=False)  # Hide legend as colors are self-explanatory
+    
+    return fig
+
+def create_map():
+    # Fetch data from the database
+    c.execute("SELECT country, fatalities, event_type FROM events WHERE country != ''")
+    data = c.fetchall()
+    
+    # Create a DataFrame
+    df = pd.DataFrame(data, columns=['Country', 'Fatalities', 'Event Type'])
+    
+    # Convert fatalities to numeric, replacing 'Unknown' with 0
+    df['Fatalities'] = pd.to_numeric(df['Fatalities'].replace('Unknown', 0))
+    
+    # Group by country and sum fatalities
+    df_grouped = df.groupby('Country').agg({'Fatalities': 'sum', 'Event Type': 'count'}).reset_index()
+    
+    # Create a map centered on the world
+    m = folium.Map(location=[0, 0], zoom_start=2, tiles='CartoDB positron')
+    
+    # Create a marker cluster
+    marker_cluster = MarkerCluster().add_to(m)
+    
+    # Create a color map for fatalities
+    colormap = LinearColormap(colors=['green', 'yellow', 'red'], vmin=df_grouped['Fatalities'].min(), vmax=df_grouped['Fatalities'].max())
+    
+    # Geocode countries and add markers
+    geolocator = Nominatim(user_agent="conflict_event_app")
+    
+    for _, row in df_grouped.iterrows():
+        try:
+            location = geolocator.geocode(row['Country'])
+            if location:
+                folium.CircleMarker(
+                    location=[location.latitude, location.longitude],
+                    radius=min(row['Fatalities'], 30),  # Cap the radius at 30
+                    popup=f"Country: {row['Country']}<br>Fatalities: {row['Fatalities']}<br>Events: {row['Event Type']}",
+                    color=colormap(row['Fatalities']),
+                    fill=True,
+                    fill_color=colormap(row['Fatalities']),
+                    fill_opacity=0.7
+                ).add_to(marker_cluster)
+        except Exception as e:
+            st.warning(f"Could not locate {row['Country']}: {str(e)}")
+    
+    # Add color map to the map
+    colormap.add_to(m)
+    colormap.caption = 'Fatalities'
+    
+    return m
+
+def data_entry_page():
+    st.title("Conflict Event Classifier")
+
+    url = st.text_input("Enter a news article URL:")
+
+    if st.button("Analyze"):
+        if url:
+            with st.spinner("Analyzing the news source..."):
+                try:
+                    result = tag_news_source(url)
+                    st.markdown(result)
+                except Exception as e:
+                    st.error(f"An error occurred: {str(e)}")
+        else:
+            st.warning("Please enter a URL.")
+
+    # Add a section to display recent analyses as a styled table
+    st.subheader("Recent Analyses")
+    c.execute("SELECT url, event_type, confidence, country, timestamp FROM events ORDER BY timestamp DESC LIMIT 5")
+    recent_analyses = c.fetchall()
+    
+    if recent_analyses:
+        df = pd.DataFrame(recent_analyses, columns=['URL', 'Event Type', 'Confidence', 'Country', 'Timestamp'])
+        df['Confidence'] = df['Confidence'].apply(lambda x: f"{x:.2f}")
+        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+        df['Timestamp'] = df['Timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Truncate long URLs
+        df['URL'] = df['URL'].apply(lambda x: x[:50] + '...' if len(x) > 50 else x)
+        
+        # Use Streamlit's built-in styling
+        st.dataframe(
+            df,
+            column_config={
+                "URL": st.column_config.TextColumn(
+                    "URL",
+                    help="The source URL of the news article",
+                    max_chars=50,
+                ),
+                "Event Type": st.column_config.TextColumn(
+                    "Event Type",
+                    help="Classified type of the conflict event",
+                ),
+                "Confidence": st.column_config.NumberColumn(
+                    "Confidence",
+                    help="Confidence score of the classification",
+                    format="%.2f",
+                ),
+                "Country": st.column_config.TextColumn(
+                    "Country",
+                    help="Country where the event occurred",
+                ),
+                "Timestamp": st.column_config.DatetimeColumn(
+                    "Timestamp",
+                    help="Date and time of the analysis",
+                    format="YYYY-MM-DD HH:mm:ss",
+                ),
+            },
+            hide_index=True,
+            use_container_width=True,
+        )
+    else:
+        st.info("No recent analyses available.")
+
+def dashboard_page():
+    st.title("Conflict Event Dashboard")
+
+    # Add bar charts
+    col1, col2 = st.columns(2)
+
+    with col1:
+        event_type_chart = create_event_type_chart()
+        st.plotly_chart(event_type_chart, use_container_width=True)
+
+    with col2:
+        fatalities_chart = create_fatalities_by_country_chart()
+        st.plotly_chart(fatalities_chart, use_container_width=True)
+
+    # Add map visualization
+    st.subheader("Event Locations")
+    map = create_map()
+    
+    # Display the map
+    folium_static(map, width=1000, height=600)
+
+# Main app logic
+def main():
+    st.sidebar.title("Navigation")
+    
+    # Create a dictionary of pages with their corresponding icons
+    pages = {
+        "Data Entry": "📝",
+        "Dashboard": "📊"
+    }
+    
+    # Create a list of options for the selectbox
+    options = [f"{icon} {page}" for page, icon in pages.items()]
+    
+    # Create the selectbox
+    selection = st.sidebar.selectbox("Go to", options)
+    
+    # Extract the page name from the selection
+    page = selection.split(" ", 1)[1]
+
+    if page == "Data Entry":
+        data_entry_page()
+    elif page == "Dashboard":
+        dashboard_page()
+
+    # Add some information about the app
+    st.sidebar.header("About")
+    st.sidebar.info(
+        "This app analyzes news articles about conflict events, classifies them into one of 5 event types, "
+        "determines the country where the event occurred, identifies the news source, "
+        "estimates the number of fatalities, and provides a brief summary. "
+        "Enter a URL of a news article to get started."
     )
 
-    llm = ChatOpenAI(model_name="gpt-4o", temperature=0.7, max_tokens=2048)
-    chain = LLMChain(prompt=prompt, llm=llm)
- 
-    # Create the LLMChain
-    chain = LLMChain(prompt=prompt, llm=llm)
-        # Run the chain and return the output
-    return chain.run(text)
+    # Add a footer
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("© 2024 Exchange.Design")
 
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST':
-        url = request.form['url']
-        logging.debug(f"Received URL: {url}")
-        result = tag_news_source(url)
-        logging.debug(f"Result: {result}")
-        return jsonify(result=result)
-    return render_template('index.html')
+if __name__ == "__main__":
+    main()
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+# Close the database connection when the app is closed
+conn.close()
