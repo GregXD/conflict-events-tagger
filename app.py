@@ -75,7 +75,8 @@ def update_database_schema():
                          (id INTEGER PRIMARY KEY AUTOINCREMENT,
                           url TEXT, event_type TEXT, confidence REAL,
                           country TEXT, news_source TEXT, fatalities TEXT,
-                          summary TEXT, timestamp DATETIME, event_date DATE)''')
+                          summary TEXT, timestamp DATETIME, event_date DATE,
+                          key_actors TEXT)''')
             conn.commit()
             logger.info("Events table created or already exists.")
         except sqlite3.Error as e:
@@ -111,6 +112,10 @@ def get_summary(text):
     prompt = f"Summarize the following news article about a conflict event in exactly two sentences. Focus on the key details of the event.\n\nNews article:\n{text}\n\nTwo-sentence summary:"
     return get_cohere_response(prompt)
 
+def get_key_actors(text):
+    prompt = f"Based on the following news article, identify the key actors (individuals, groups, or organizations) involved in the event. Provide a comma-separated list of the most important 2-3 actors.\n\nNews article:\n{text}\n\nKey actors:"
+    return get_cohere_response(prompt)
+
 def delete_event(event_id):
     try:
         conn = sqlite3.connect('conflict_events.db')  # Replace with your actual database name
@@ -128,15 +133,16 @@ def delete_event_callback(event_id):
     try:
         delete_event(event_id)
         st.session_state.delete_success = f"Event {event_id} deleted successfully."
-        st.rerun()
     except Exception as e:
         st.session_state.delete_error = f"Error deleting event {event_id}: {e}"
 
 
+
 def fetch_analyses():
-    analyses = execute_db_query("SELECT id, url, event_type, confidence, country, news_source, fatalities, summary, event_date FROM events ORDER BY event_date DESC")
+    analyses = execute_db_query("SELECT id, url, event_type, confidence, country, news_source, fatalities, summary, event_date, key_actors FROM events ORDER BY event_date DESC")
     return [(row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], 
-             datetime.strptime(row[8], '%Y-%m-%d').date() if row[8] else None) 
+             datetime.strptime(row[8], '%Y-%m-%d').date() if row[8] else None,
+             row[9]) 
             for row in analyses]
 
 def get_event_date(text):
@@ -253,10 +259,15 @@ def tag_news_source(url):
             result_queue.put(("result", f"This **{classification.prediction}** event occurred on **{event_date_str or 'Unknown date'}** in **{country}**, as reported by **{news_source}**."))
             logger.info(f"Determined event date: {event_date_str or 'Unknown'}")
 
+            result_queue.put(("progress", "Identifying key actors..."))
+            key_actors = get_key_actors(text)
+            result_queue.put(("result", f"This **{classification.prediction}** event in **{country}**, reported by **{news_source}**, involved key actors: **{key_actors}**."))
+            logger.info(f"Identified key actors: {key_actors}")
+
             result_queue.put(("progress", "Inserting results into the database..."))
-            query = '''INSERT INTO events (url, event_type, confidence, country, news_source, fatalities, summary, timestamp, event_date)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'''
-            params = (url, classification.prediction, classification.confidence, country, news_source, str(fatalities), summary, datetime.now(), event_date)
+            query = '''INSERT INTO events (url, event_type, confidence, country, news_source, fatalities, summary, timestamp, event_date, key_actors)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''
+            params = (url, classification.prediction, classification.confidence, country, news_source, str(fatalities), summary, datetime.now(), event_date, key_actors)
             logger.info(f"SQL Query: {query}")
             logger.info(f"SQL Params: {params}")
             execute_db_query(query, params, fetch=False)
@@ -427,14 +438,6 @@ def data_entry_page():
 
     st.subheader("Recent Analyses")
 
-    # Display success or error messages from previous delete operations
-    if 'delete_success' in st.session_state:
-        st.success(st.session_state.delete_success)
-        del st.session_state.delete_success
-    if 'delete_error' in st.session_state:
-        st.error(st.session_state.delete_error)
-        del st.session_state.delete_error
-
     # Fetch analyses from the database
     analyses = fetch_analyses()
 
@@ -453,38 +456,57 @@ def data_entry_page():
     if search_term:
         filtered_analyses = [row for row in filtered_analyses if any(search_term.lower() in str(cell).lower() for cell in row)]
 
-    # Display the table with pagination and delete buttons
-    for row in filtered_analyses:
+    # Display the table with headers
+    if filtered_analyses:
+        # Table headers
         col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns([1, 3, 2, 1, 2, 2, 1, 4, 2, 1])
-        with col1:
-            st.write(row[0])  # ID
-        with col2:
-            st.write(row[1][:50] + '...' if len(row[1]) > 50 else row[1])  # URL
-        with col3:
-            st.write(row[2])  # Event Type
-        with col4:
-            st.write(f"{row[3]:.2f}")  # Confidence
-        with col5:
-            st.write(row[4])  # Country
-        with col6:
-            st.write(row[5])  # News Source
-        with col7:
-            st.write(row[6])  # Fatalities
-        with col8:
-            st.write(row[7])  # Summary
-        with col9:
-            # Handle both string and date object types
-            if isinstance(row[8], str):
-                st.write(row[8])
-            elif row[8]:
-                st.write(row[8].strftime('%Y-%m-%d'))
-            else:
-                st.write('')  # Event Date
-        with col10:
-            if st.button('🗑️', key=f"delete_{row[0]}"):
-                delete_event_callback(row[0])
+        col1.write("**ID**")
+        col2.write("**URL**")
+        col3.write("**Event Type**")
+        col4.write("**Confidence**")
+        col5.write("**Country**")
+        col6.write("**News Source**")
+        col7.write("**Fatalities**")
+        col8.write("**Summary**")
+        col9.write("**Event Date**")
+        col10.write("**Action**")
 
-    if not filtered_analyses:
+        # Table rows
+        for row in filtered_analyses:
+            col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns([1, 3, 2, 1, 2, 2, 1, 4, 2, 1])
+            with col1:
+                st.write(row[0])  # ID
+            with col2:
+                st.write(row[1][:50] + '...' if len(row[1]) > 50 else row[1])  # URL
+            with col3:
+                st.write(row[2])  # Event Type
+            with col4:
+                st.write(f"{row[3]:.2f}")  # Confidence
+            with col5:
+                st.write(row[4])  # Country
+            with col6:
+                st.write(row[5])  # News Source
+            with col7:
+                st.write(row[6])  # Fatalities
+            with col8:
+                st.write(row[7])  # Summary
+            with col9:
+                # Handle both string and date object types
+                if isinstance(row[8], str):
+                    st.write(row[8])
+                elif row[8]:
+                    st.write(row[8].strftime('%Y-%m-%d'))
+                else:
+                    st.write('')  # Event Date
+            with col10:
+                if st.button('🗑️', key=f"delete_{row[0]}"):
+                    try:
+                        delete_event(row[0])
+                        st.success(f"Event {row[0]} deleted successfully.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error deleting event {row[0]}: {e}")
+    else:
         st.info("No analyses available.")
 
 def dashboard_page():
