@@ -19,7 +19,6 @@ from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from queue import Queue
 from datetime import datetime
-from streamlit_card import card
 
 
 # Constants and Configuration
