@@ -22,7 +22,7 @@ from queue import Queue
 
 # Constants and Configuration
 DATABASE_NAME = 'conflict_events.db'
-COHERE_MODEL_ID = '2fcfb5aa-5d0c-4758-ace5-ce80d13034fd-ft'
+COHERE_MODEL_ID = os.getenv("EVENT_CLASSIFICATION_MODEL_ID")
 GAPMINDER_COLORS = px.colors.qualitative.Set2
 
 # Set up logging
