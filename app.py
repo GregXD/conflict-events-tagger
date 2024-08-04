@@ -18,10 +18,12 @@ import time
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from queue import Queue
+from datetime import datetime
+from streamlit_card import card
 
 
 # Constants and Configuration
-DATABASE_NAME = 'conflict_events.db'
+DATABASE_NAME = os.path.join(os.path.dirname(__file__), 'conflict_events.db')
 COHERE_MODEL_ID = os.getenv("EVENT_CLASSIFICATION_MODEL_ID")
 GAPMINDER_COLORS = px.colors.qualitative.Set2
 
@@ -49,53 +51,37 @@ def get_db_connection():
 def execute_db_query(query, params=None, fetch=True):
     with get_db_connection() as conn:
         c = conn.cursor()
-        if params:
-            c.execute(query, params)
-        else:
-            c.execute(query)
-        if fetch:
-            result = c.fetchall()
-        conn.commit()
-        return result if fetch else None
+        try:
+            if params:
+                c.execute(query, params)
+            else:
+                c.execute(query)
+            if fetch:
+                result = c.fetchall()
+                return result
+            conn.commit()
+        except sqlite3.Error as e:
+            logger.error(f"SQLite error: {e}")
+            logger.error(f"Query: {query}")
+            logger.error(f"Params: {params}")
+            raise
+
 
 def update_database_schema():
     with get_db_connection() as conn:
         c = conn.cursor()
         try:
-            # Check if the events table exists
-            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='events'")
-            events_table_exists = c.fetchone() is not None
-
-            if events_table_exists:
-                # Create the new table
-                c.execute('''CREATE TABLE IF NOT EXISTS events_new
-                             (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                              url TEXT, event_type TEXT, confidence REAL,
-                              country TEXT, news_source TEXT, fatalities TEXT,
-                              summary TEXT, timestamp DATETIME, event_date DATE)''')
-                
-                # Copy data from the old table to the new one
-                c.execute('''INSERT INTO events_new (id, url, event_type, confidence, country, news_source, fatalities, summary, timestamp)
-                             SELECT id, url, event_type, confidence, country, news_source, fatalities, summary, timestamp FROM events''')
-                
-                # Drop the old table and rename the new one
-                c.execute('DROP TABLE events')
-                c.execute('ALTER TABLE events_new RENAME TO events')
-                
-                logger.info("Database schema updated successfully.")
-            else:
-                # If the events table doesn't exist, create it
-                c.execute('''CREATE TABLE IF NOT EXISTS events
-                             (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                              url TEXT, event_type TEXT, confidence REAL,
-                              country TEXT, news_source TEXT, fatalities TEXT,
-                              summary TEXT, timestamp DATETIME, event_date DATE)''')
-                logger.info("Events table created successfully.")
-
+            c.execute('''CREATE TABLE IF NOT EXISTS events
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          url TEXT, event_type TEXT, confidence REAL,
+                          country TEXT, news_source TEXT, fatalities TEXT,
+                          summary TEXT, timestamp DATETIME, event_date DATE)''')
             conn.commit()
+            logger.info("Events table created or already exists.")
         except sqlite3.Error as e:
             logger.error(f"An error occurred while updating the database schema: {e}")
             conn.rollback()
+
 
 # Cohere API functions
 def classify_event(text):
@@ -125,6 +111,34 @@ def get_summary(text):
     prompt = f"Summarize the following news article about a conflict event in exactly two sentences. Focus on the key details of the event.\n\nNews article:\n{text}\n\nTwo-sentence summary:"
     return get_cohere_response(prompt)
 
+def delete_event(event_id):
+    try:
+        conn = sqlite3.connect('conflict_events.db')  # Replace with your actual database name
+        c = conn.cursor()
+        c.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        conn.commit()
+        logger.info(f"Deleted event with ID: {event_id}")
+    except sqlite3.Error as e:
+        logger.error(f"Error deleting event: {e}")
+        raise
+    finally:
+        conn.close()
+
+def delete_event_callback(event_id):
+    try:
+        delete_event(event_id)
+        st.session_state.delete_success = f"Event {event_id} deleted successfully."
+        st.rerun()
+    except Exception as e:
+        st.session_state.delete_error = f"Error deleting event {event_id}: {e}"
+
+
+def fetch_analyses():
+    analyses = execute_db_query("SELECT id, url, event_type, confidence, country, news_source, fatalities, summary, event_date FROM events ORDER BY event_date DESC")
+    return [(row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], 
+             datetime.strptime(row[8], '%Y-%m-%d').date() if row[8] else None) 
+            for row in analyses]
+
 def get_event_date(text):
     prompt = f"""Based on the following news article, determine the date when the event occurred. Provide the date in YYYY-MM-DD format. If the exact date is not specified, provide the most likely date based on the context. If no date can be determined, respond with 'Unknown'.
 
@@ -134,10 +148,38 @@ News article:
 Event Date (YYYY-MM-DD):"""
 
     result = get_cohere_response(prompt)
-    try:
-        return datetime.strptime(result, "%Y-%m-%d").date()
-    except ValueError:
+    logger.info(f"Raw event date from Cohere: {result}")
+    
+    if result.lower() == 'unknown':
+        logger.info("Event date is unknown")
         return None
+    
+    # Try parsing the date in different formats
+    date_formats = ["%Y-%m-%d", "%B %d, %Y", "%d %B %Y", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y"]
+    
+    for date_format in date_formats:
+        try:
+            date_obj = datetime.strptime(result, date_format).date()
+            logger.info(f"Parsed event date: {date_obj}")
+            return date_obj
+        except ValueError:
+            continue
+    
+    logger.warning(f"Could not parse date: {result}")
+    # Try to extract a date from the text if Cohere didn't return a valid date
+    date_pattern = r'\b(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4}|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b'
+    match = re.search(date_pattern, text, re.IGNORECASE)
+    if match:
+        extracted_date = match.group(1)
+        for date_format in date_formats:
+            try:
+                date_obj = datetime.strptime(extracted_date, date_format).date()
+                logger.info(f"Extracted date from text: {date_obj}")
+                return date_obj
+            except ValueError:
+                continue
+        logger.warning(f"Extracted date is invalid: {extracted_date}")
+    return None
 
 def tag_news_source(url):
     max_retries = 3
@@ -205,15 +247,19 @@ def tag_news_source(url):
 
             result_queue.put(("progress", "Determining event date..."))
             event_date = get_event_date(text)
+            logger.info(f"Raw event_date: {event_date}")
             event_date_str = event_date.strftime("%Y-%m-%d") if event_date else None
+            logger.info(f"Formatted event_date_str: {event_date_str}")
             result_queue.put(("result", f"This **{classification.prediction}** event occurred on **{event_date_str or 'Unknown date'}** in **{country}**, as reported by **{news_source}**."))
             logger.info(f"Determined event date: {event_date_str or 'Unknown'}")
 
             result_queue.put(("progress", "Inserting results into the database..."))
-            execute_db_query('''INSERT INTO events (url, event_type, confidence, country, news_source, fatalities, summary, timestamp, event_date)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                      (url, classification.prediction, classification.confidence, country, news_source, str(fatalities), summary, datetime.now(), event_date),
-                      fetch=False)
+            query = '''INSERT INTO events (url, event_type, confidence, country, news_source, fatalities, summary, timestamp, event_date)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'''
+            params = (url, classification.prediction, classification.confidence, country, news_source, str(fatalities), summary, datetime.now(), event_date)
+            logger.info(f"SQL Query: {query}")
+            logger.info(f"SQL Params: {params}")
+            execute_db_query(query, params, fetch=False)
             logger.info("Results inserted into the database")
 
             result_queue.put(("progress", "Analysis completed successfully."))
@@ -256,9 +302,6 @@ def tag_news_source(url):
 
     return None
 
-def delete_event(event_id):
-    execute_db_query("DELETE FROM events WHERE id = ?", (event_id,))
-    logger.info(f"Deleted event with ID: {event_id}")
 
 # Chart creation functions
 def create_events_by_country_chart():
@@ -303,12 +346,26 @@ def create_fatalities_by_country_chart():
 def create_map():
     data = execute_db_query("SELECT country, fatalities, event_type FROM events WHERE country != ''")
     df = pd.DataFrame(data, columns=['Country', 'Fatalities', 'Event Type'])
-    df['Fatalities'] = pd.to_numeric(df['Fatalities'].replace('Unknown', 0))
+    
+    # Convert 'Unknown' to 0 and ensure all values are numeric
+    df['Fatalities'] = pd.to_numeric(df['Fatalities'].replace({'Unknown': '0', '': '0'}), errors='coerce').fillna(0)
+    
     df_grouped = df.groupby('Country').agg({'Fatalities': 'sum', 'Event Type': 'count'}).reset_index()
+    
+    # Check if there's any data
+    if df_grouped.empty:
+        return None
+
+    # Ensure we have at least two distinct values for the colormap
+    fatality_values = sorted(df_grouped['Fatalities'].unique())
+    if len(fatality_values) < 2:
+        fatality_values = [0, 1]  # Default range if there's only one unique value or no values
     
     m = folium.Map(location=[0, 0], zoom_start=2, tiles='CartoDB positron')
     marker_cluster = MarkerCluster().add_to(m)
-    colormap = LinearColormap(colors=['green', 'yellow', 'red'], vmin=df_grouped['Fatalities'].min(), vmax=df_grouped['Fatalities'].max())
+    
+    # Create the colormap with the sorted values
+    colormap = LinearColormap(colors=['green', 'yellow', 'red'], vmin=min(fatality_values), vmax=max(fatality_values))
     
     geolocator = Nominatim(user_agent="conflict_event_app")
     for _, row in df_grouped.iterrows():
@@ -336,6 +393,9 @@ def create_events_over_time_chart():
     df = pd.DataFrame(data, columns=['Date', 'Event Count'])
     df['Date'] = pd.to_datetime(df['Date'])
     
+    if df.empty:
+        return None
+    
     fig = px.bar(df, x='Date', y='Event Count',
                  title='Events Over Time',
                  labels={'Event Count': 'Number of Events'},
@@ -345,7 +405,6 @@ def create_events_over_time_chart():
     fig.update_layout(xaxis_title="Date", yaxis_title="Number of Events")
     return fig
 
-# Streamlit page functions
 def data_entry_page():
     st.title("Conflict Event Classifier")
     url = st.text_input("Enter a news article URL:")
@@ -368,94 +427,64 @@ def data_entry_page():
 
     st.subheader("Recent Analyses")
 
-    # Fetch all events
-    all_analyses = execute_db_query("SELECT id, url, event_type, confidence, country, news_source, fatalities, summary, timestamp FROM events ORDER BY timestamp DESC")
+    # Display success or error messages from previous delete operations
+    if 'delete_success' in st.session_state:
+        st.success(st.session_state.delete_success)
+        del st.session_state.delete_success
+    if 'delete_error' in st.session_state:
+        st.error(st.session_state.delete_error)
+        del st.session_state.delete_error
 
-    if all_analyses:
-        df = pd.DataFrame(all_analyses, columns=['ID', 'URL', 'Event Type', 'Confidence', 'Country', 'News Source', 'Fatalities', 'Summary', 'Timestamp'])
-        df['Confidence'] = df['Confidence'].apply(lambda x: f"{x:.2f}")
-        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-        df['URL'] = df['URL'].apply(lambda x: x[:50] + '...' if len(x) > 50 else x)
+    # Fetch analyses from the database
+    analyses = fetch_analyses()
 
-        # Event type filter
-        event_types = ['All'] + sorted(df['Event Type'].unique().tolist())
-        selected_event_type = st.selectbox("Filter by Event Type", event_types, key="data_entry_event_type")
+    # Event type filter
+    event_types = ['All'] + sorted(set(row[2] for row in analyses))
+    selected_event_type = st.selectbox("Filter by Event Type", event_types, key="data_entry_event_type")
 
-        # Search bar
-        search_term = st.text_input("Search in all fields")
+    # Search bar
+    search_term = st.text_input("Search in all fields")
 
-        # Filter the dataframe
-        if selected_event_type != 'All':
-            df = df[df['Event Type'] == selected_event_type]
-        
-        if search_term:
-            df = df[df.astype(str).apply(lambda row: row.str.contains(search_term, case=False).any(), axis=1)]
+    # Filter the analyses
+    filtered_analyses = analyses
+    if selected_event_type != 'All':
+        filtered_analyses = [row for row in filtered_analyses if row[2] == selected_event_type]
+    
+    if search_term:
+        filtered_analyses = [row for row in filtered_analyses if any(search_term.lower() in str(cell).lower() for cell in row)]
 
-        # Display the table with pagination
-        edited_df = st.data_editor(
-            df,
-            hide_index=True,
-            column_config={
-                "ID": st.column_config.NumberColumn(
-                    "ID",
-                    help="Event ID",
-                    width="small",
-                ),
-                "URL": st.column_config.TextColumn(
-                    "URL",
-                    help="Article URL",
-                    width="medium",
-                ),
-                "Event Type": st.column_config.TextColumn(
-                    "Event Type",
-                    help="Type of conflict event",
-                    width="medium",
-                ),
-                "Confidence": st.column_config.NumberColumn(
-                    "Confidence",
-                    help="Confidence score of the classification",
-                    format="%.2f",
-                    width="small",
-                ),
-                "Country": st.column_config.TextColumn(
-                    "Country",
-                    help="Country where the event occurred",
-                    width="medium",
-                ),
-                "News Source": st.column_config.TextColumn(
-                    "News Source",
-                    help="Source of the news article",
-                    width="medium",
-                ),
-                "Fatalities": st.column_config.TextColumn(
-                    "Fatalities",
-                    help="Number of fatalities",
-                    width="small",
-                ),
-                "Summary": st.column_config.TextColumn(
-                    "Summary",
-                    help="Brief summary of the event",
-                    width="large",
-                ),
-                "Timestamp": st.column_config.DatetimeColumn(
-                    "Timestamp",
-                    help="Time of analysis",
-                    format="DD/MM/YYYY HH:mm:ss",
-                    width="medium",
-                ),
-            },
-            num_rows="dynamic",
-            use_container_width=True,
-        )
+    # Display the table with pagination and delete buttons
+    for row in filtered_analyses:
+        col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns([1, 3, 2, 1, 2, 2, 1, 4, 2, 1])
+        with col1:
+            st.write(row[0])  # ID
+        with col2:
+            st.write(row[1][:50] + '...' if len(row[1]) > 50 else row[1])  # URL
+        with col3:
+            st.write(row[2])  # Event Type
+        with col4:
+            st.write(f"{row[3]:.2f}")  # Confidence
+        with col5:
+            st.write(row[4])  # Country
+        with col6:
+            st.write(row[5])  # News Source
+        with col7:
+            st.write(row[6])  # Fatalities
+        with col8:
+            st.write(row[7])  # Summary
+        with col9:
+            # Handle both string and date object types
+            if isinstance(row[8], str):
+                st.write(row[8])
+            elif row[8]:
+                st.write(row[8].strftime('%Y-%m-%d'))
+            else:
+                st.write('')  # Event Date
+        with col10:
+            if st.button('🗑️', key=f"delete_{row[0]}"):
+                delete_event_callback(row[0])
 
-        # Handle deletions
-        if edited_df.shape[0] < df.shape[0]:
-            deleted_ids = set(df['ID']) - set(edited_df['ID'])
-            for id in deleted_ids:
-                delete_event(id)
-            st.rerun()
-
-    else:
+    if not filtered_analyses:
         st.info("No analyses available.")
 
 def dashboard_page():
@@ -507,13 +536,21 @@ def dashboard_page():
 
     # Display the map
     st.subheader("Event Locations")
-    folium_static(create_map(), width=1000, height=400)
+    map_obj = create_map()
+    if map_obj:
+        folium_static(map_obj, width=1000, height=400)
+    else:
+        st.warning("No data available to display the map.")
 
     # Add some space
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Events over time chart
-    st.plotly_chart(create_events_over_time_chart(), use_container_width=True)
+    events_over_time = create_events_over_time_chart()
+    if events_over_time:
+        st.plotly_chart(events_over_time, use_container_width=True)
+    else:
+        st.warning("No data available to display events over time.")
 
     # Create tabs for different chart views
     tab1, tab2 = st.tabs(["Events Overview", "Fatalities Overview"])
@@ -521,99 +558,124 @@ def dashboard_page():
     with tab1:
         col1, col2 = st.columns(2)
         with col1:
-            st.plotly_chart(create_event_type_chart(), use_container_width=True)
+            event_type_chart = create_event_type_chart()
+            if event_type_chart:
+                st.plotly_chart(event_type_chart, use_container_width=True)
+            else:
+                st.warning("No data available for event type distribution.")
         with col2:
-            st.plotly_chart(create_events_by_country_chart(), use_container_width=True)
+            events_by_country_chart = create_events_by_country_chart()
+            if events_by_country_chart:
+                st.plotly_chart(events_by_country_chart, use_container_width=True)
+            else:
+                st.warning("No data available for events by country.")
 
     with tab2:
-        st.plotly_chart(create_fatalities_by_country_chart(), use_container_width=True)
+        fatalities_chart = create_fatalities_by_country_chart()
+        if fatalities_chart:
+            st.plotly_chart(fatalities_chart, use_container_width=True)
+        else:
+            st.warning("No data available for fatalities by country.")
 
-    st.sidebar.title("Navigation")
-    pages = {
-        "Data Entry": "📝",
-        "Dashboard": "📊"
-    }
-    selection = st.sidebar.selectbox(
-        "Go to", 
-        [f"{icon} {page}" for page, icon in pages.items()],
-        key="navigation_selectbox"
-    )
-    page = selection.split(" ", 1)[1]
 
 def dashboard_page():
     st.title("Conflict Event Dashboard")
 
-    # Key Statistics at the top
-    st.markdown("### Key Statistics")
-    col1, col2, col3 = st.columns(3)
-    
-    total_events = execute_db_query("SELECT COUNT(*) FROM events")[0][0]
-    total_countries = execute_db_query("SELECT COUNT(DISTINCT country) FROM events")[0][0]
-    total_fatalities = execute_db_query("SELECT SUM(CAST(fatalities AS INTEGER)) FROM events WHERE fatalities != 'Unknown'")[0][0]
-
-    with col1:
+    # Create a centered container with max width
+    container = st.container()
+    with container:
+        # Set the maximum width of the content
         st.markdown(
             """
-            <div style="padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center;">
-                <h3 style="color: #3366cc;">Total Events</h3>
-                <p style="font-size: 24px; font-weight: bold;">{}</p>
-            </div>
-            """.format(total_events),
+            <style>
+            .reportview-container .main .block-container {
+                max-width: 1200px;
+                padding-top: 2rem;
+                padding-right: 2rem;
+                padding-left: 2rem;
+                padding-bottom: 2rem;
+            }
+            </style>
+            """,
             unsafe_allow_html=True
         )
 
-    with col2:
-        st.markdown(
-            """
-            <div style="padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center;">
-                <h3 style="color: #dc3912;">Countries Affected</h3>
-                <p style="font-size: 24px; font-weight: bold;">{}</p>
-            </div>
-            """.format(total_countries),
-            unsafe_allow_html=True
-        )
+        # Key Statistics at the top
+        st.markdown("### Key Statistics")
+        col1, col2, col3 = st.columns(3)
+        
+        total_events = execute_db_query("SELECT COUNT(*) FROM events")[0][0]
+        total_countries = execute_db_query("SELECT COUNT(DISTINCT country) FROM events")[0][0]
+        total_fatalities = execute_db_query("SELECT SUM(CAST(fatalities AS INTEGER)) FROM events WHERE fatalities != 'Unknown'")[0][0]
 
-    with col3:
-        st.markdown(
-            """
-            <div style="padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center;">
-                <h3 style="color: #ff9900;">Total Fatalities</h3>
-                <p style="font-size: 24px; font-weight: bold;">{}</p>
-            </div>
-            """.format(total_fatalities or 0),
-            unsafe_allow_html=True
-        )
-
-    # Add some space
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Display the map
-    st.subheader("Event Locations")
-    folium_static(create_map(), width=1000, height=400)
-
-    # Add some space
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Events over time chart
-    st.plotly_chart(create_events_over_time_chart(), use_container_width=True)
-
-    # Create tabs for different chart views
-    tab1, tab2 = st.tabs(["Events Overview", "Fatalities Overview"])
-
-    with tab1:
-        col1, col2 = st.columns(2)
         with col1:
-            st.plotly_chart(create_event_type_chart(), use_container_width=True)
+            st.metric(label="Total Events", value=total_events)
+
         with col2:
-            st.plotly_chart(create_events_by_country_chart(), use_container_width=True)
+            st.metric(label="Countries Affected", value=total_countries)
 
-    with tab2:
-        st.plotly_chart(create_fatalities_by_country_chart(), use_container_width=True)
+        with col3:
+            st.metric(label="Total Fatalities", value=total_fatalities or 0)
 
+        # Add some space
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Display the map
+        st.subheader("Event Locations")
+        map_obj = create_map()
+        if map_obj:
+            # Use st.components.v1.html to make the map responsive
+            map_html = folium.Figure().add_child(map_obj).render()
+            st.components.v1.html(
+                f"""
+                <div style="width:100%; height:400px;">
+                    {map_html}
+                </div>
+                """,
+                height=400,
+            )
+        else:
+            st.warning("No data available to display the map.")
+
+        # Add some space
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Events over time chart
+        events_over_time = create_events_over_time_chart()
+        if events_over_time:
+            st.plotly_chart(events_over_time, use_container_width=True)
+        else:
+            st.warning("No data available to display events over time.")
+
+        # Create tabs for different chart views
+        tab1, tab2 = st.tabs(["Events Overview", "Fatalities Overview"])
+
+        with tab1:
+            col1, col2 = st.columns(2)
+            with col1:
+                event_type_chart = create_event_type_chart()
+                if event_type_chart:
+                    st.plotly_chart(event_type_chart, use_container_width=True)
+                else:
+                    st.warning("No data available for event type distribution.")
+            with col2:
+                events_by_country_chart = create_events_by_country_chart()
+                if events_by_country_chart:
+                    st.plotly_chart(events_by_country_chart, use_container_width=True)
+                else:
+                    st.warning("No data available for events by country.")
+
+        with tab2:
+            fatalities_chart = create_fatalities_by_country_chart()
+            if fatalities_chart:
+                st.plotly_chart(fatalities_chart, use_container_width=True)
+            else:
+                st.warning("No data available for fatalities by country.")
 
 
 def main():
     try:
+        logger.info(f"Using database: {os.path.abspath(DATABASE_NAME)}")
         update_database_schema()
         st.sidebar.title("Navigation")
         pages = {
