@@ -3,3 +3,8 @@
 # Ignore .env file
 .env
 sample_events.csv
+cohere_prepared_single_label.csv
+cohere_prepared_single_label.jsonl
+playground.ipynb
+sampled_events.csv
+ACLED 2023 Subset.csv
