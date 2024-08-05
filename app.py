@@ -19,6 +19,8 @@ from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from queue import Queue
 from datetime import datetime
+from newsapi import NewsApiClient
+
 
 st.set_page_config(page_title="Conflict Event Tagger", page_icon="xd_logo.png", layout="wide")
 
@@ -416,98 +418,151 @@ def create_events_over_time_chart():
     fig.update_layout(xaxis_title="Date", yaxis_title="Number of Events")
     return fig
 
+
+
+# Load NewsAPI key from environment variables
+newsapi_key = os.getenv("NEWSAPI_KEY")
+if not newsapi_key:
+    st.error("NEWSAPI_KEY environment variable is not set.")
+    st.stop()
+
+newsapi = NewsApiClient(api_key=newsapi_key)
+
+def fetch_live_news(query="conflict", language="en"):
+    """Fetch live news articles based on the query."""
+    try:
+        articles = newsapi.get_everything(q=query, language=language, sort_by="publishedAt")
+        return articles['articles']
+    except Exception as e:
+        logger.error(f"Failed to fetch news: {str(e)}")
+        return []
+
 def data_entry_page():
     st.title("Conflict Event Classifier")
-    url = st.text_input("Enter a news article URL:")
-    if st.button("Analyze"):
-        if url:
-            try:
-                result = tag_news_source(url)
-                logger.info("Analysis completed and displayed to user")
-            except sqlite3.Error as e:
-                logger.exception(f"Database error: {str(e)}")
-                st.error(f"A database error occurred: {str(e)}")
-                st.error("Please check your database configuration and try again.")
-            except Exception as e:
-                logger.exception(f"Error during analysis: {str(e)}")
-                st.error(f"An error occurred: {str(e)}")
-                st.error("Please try again later or with a different URL.")
-        else:
-            st.warning("Please enter a URL.")
-            logger.warning("User attempted to analyze without entering a URL")
-
-    st.subheader("Recent Analyses")
-
-    # Fetch analyses from the database
-    analyses = fetch_analyses()
-
-    # Event type filter
-    event_types = ['All'] + sorted(set(row[2] for row in analyses))
-    selected_event_type = st.selectbox("Filter by Event Type", event_types, key="data_entry_event_type")
-
-    # Search bar
-    search_term = st.text_input("Search in all fields")
-
-    # Filter the analyses
-    filtered_analyses = analyses
-    if selected_event_type != 'All':
-        filtered_analyses = [row for row in filtered_analyses if row[2] == selected_event_type]
     
-    if search_term:
-        filtered_analyses = [row for row in filtered_analyses if any(search_term.lower() in str(cell).lower() for cell in row)]
+    # Create tabs for News API and URL input
+    tab1, tab2, tab3 = st.tabs(["Recent Analyses","Manual URL Input","Search for News"])
+    with tab1:
+        st.subheader("Recent Analyses")
+        st.write("No recent analyses available.") 
 
-    # Display the table with headers
-    if filtered_analyses:
-        # Table headers
-        col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns([1, 3, 2, 1, 2, 2, 1, 4, 2, 1])
-        col1.write("**ID**")
-        col2.write("**URL**")
-        col3.write("**Event Type**")
-        col4.write("**Confidence**")
-        col5.write("**Country**")
-        col6.write("**News Source**")
-        col7.write("**Fatalities**")
-        col8.write("**Summary**")
-        col9.write("**Event Date**")
-        col10.write("**Action**")
+        # Fetch analyses from the database
+        analyses = fetch_analyses()
 
-        # Table rows
-        for row in filtered_analyses:
+        # Event type filter
+        event_types = ['All'] + sorted(set(row[2] for row in analyses))
+        selected_event_type = st.selectbox("Filter by Event Type", event_types, key="data_entry_event_type")
+
+        # Search bar
+        search_term = st.text_input("Search in all fields")
+
+        # Filter the analyses
+        filtered_analyses = analyses
+        if selected_event_type != 'All':
+            filtered_analyses = [row for row in filtered_analyses if row[2] == selected_event_type]
+        
+        if search_term:
+            filtered_analyses = [row for row in filtered_analyses if any(search_term.lower() in str(cell).lower() for cell in row)]
+
+        # Display the table with headers
+        if filtered_analyses:
+            # Table headers
             col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns([1, 3, 2, 1, 2, 2, 1, 4, 2, 1])
-            with col1:
-                st.write(row[0])  # ID
-            with col2:
-                st.write(row[1][:50] + '...' if len(row[1]) > 50 else row[1])  # URL
-            with col3:
-                st.write(row[2])  # Event Type
-            with col4:
-                st.write(f"{row[3]:.2f}")  # Confidence
-            with col5:
-                st.write(row[4])  # Country
-            with col6:
-                st.write(row[5])  # News Source
-            with col7:
-                st.write(row[6])  # Fatalities
-            with col8:
-                st.write(row[7])  # Summary
-            with col9:
-                # Handle both string and date object types
-                if isinstance(row[8], str):
-                    st.write(row[8])
-                elif row[8]:
-                    st.write(row[8].strftime('%Y-%m-%d'))
-                else:
-                    st.write('')  # Event Date
-            with col10:
-                if st.button('🗑️', key=f"delete_{row[0]}"):
+            col1.write("**ID**")
+            col2.write("**URL**")
+            col3.write("**Event Type**")
+            col4.write("**Confidence**")
+            col5.write("**Country**")
+            col6.write("**News Source**")
+            col7.write("**Fatalities**")
+            col8.write("**Summary**")
+            col9.write("**Event Date**")
+            col10.write("**Action**")
+
+            # Table rows
+            for row in filtered_analyses:
+                col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns([1, 3, 2, 1, 2, 2, 1, 4, 2, 1])
+                with col1:
+                    st.write(row[0])  # ID
+                with col2:
+                    st.write(row[1][:50] + '...' if len(row[1]) > 50 else row[1])  # URL
+                with col3:
+                    st.write(row[2])  # Event Type
+                with col4:
+                    st.write(f"{row[3]:.2f}")  # Confidence
+                with col5:
+                    st.write(row[4])  # Country
+                with col6:
+                    st.write(row[5])  # News Source
+                with col7:
+                    st.write(row[6])  # Fatalities
+                with col8:
+                    st.write(row[7])  # Summary
+                with col9:
+                    # Handle both string and date object types
+                    if isinstance(row[8], str):
+                        st.write(row[8])
+                    elif row[8]:
+                        st.write(row[8].strftime('%Y-%m-%d'))
+                    else:
+                        st.write('')  # Event Date
+                with col10:
+                    if st.button('🗑️', key=f"delete_{row[0]}"):
+                        try:
+                            delete_event(row[0])
+                            st.success(f"Event {row[0]} deleted successfully.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error deleting event {row[0]}: {e}")
+        else:
+            st.info("No analyses available.")
+    with tab2:
+        st.subheader("Manual URL Input")
+        url = st.text_input("Enter a news article URL:")
+        if st.button("Analyze", key="analyze_manual"):
+            if url:
+                try:
+                    result = tag_news_source(url)
+                    logger.info("Analysis completed and displayed to user")
+                except sqlite3.Error as e:
+                    logger.exception(f"Database error: {str(e)}")
+                    st.error(f"A database error occurred: {str(e)}")
+                    st.error("Please check your database configuration and try again.")
+                except Exception as e:
+                    logger.exception(f"Error during analysis: {str(e)}")
+                    st.error(f"An error occurred: {str(e)}")
+                    st.error("Please try again later or with a different URL.")
+            else:
+                st.warning("Please enter a URL.")
+                logger.warning("User attempted to analyze without entering a URL")
+    with tab3:
+        st.subheader("Live News Feed")
+        query = st.text_input("Search for news articles", value="conflict", key="news_query")
+        articles = fetch_live_news(query=query)
+        
+        if articles:
+            for i, article in enumerate(articles[:5]):  # Display top 5 articles
+                st.markdown(f"### [{article['title']}]({article['url']})")
+                st.write(f"**Source**: {article['source']['name']}")
+                st.write(f"**Published At**: {article['publishedAt']}")
+                st.write(article['description'] or "")
+                if st.button(f"Analyze Article {i+1}", key=f"analyze_{i}"):
                     try:
-                        delete_event(row[0])
-                        st.success(f"Event {row[0]} deleted successfully.")
-                        st.rerun()
+                        result = tag_news_source(article['url'])
+                        logger.info("Analysis completed and displayed to user")
+                    except sqlite3.Error as e:
+                        logger.exception(f"Database error: {str(e)}")
+                        st.error(f"A database error occurred: {str(e)}")
+                        st.error("Please check your database configuration and try again.")
                     except Exception as e:
-                        st.error(f"Error deleting event {row[0]}: {e}")
-    else:
-        st.info("No analyses available.")
+                        logger.exception(f"Error during analysis: {str(e)}")
+                        st.error(f"An error occurred: {str(e)}")
+                        st.error("Please try again later or with a different URL.")
+                st.markdown("---")
+        else:
+            st.write("No articles found.")
+
+   
 
 def dashboard_page():
     st.title("Conflict Event Dashboard")
