@@ -1260,19 +1260,6 @@ def about_page():
         - [Folium](https://folium.readthedocs.io) - Map visualizations
         """)
     
-    # Contact and development info
-    st.markdown("## Contact & Development")
-    
-    st.info("""
-    **Developed by Exchange Design**
-    
-    This application was created to assist researchers, journalists, and analysts in understanding global conflict patterns 
-    through automated news analysis and visualization.
-    
-    - 🌐 **Website**: [exchange.design](https://www.exchange.design)
-    - 💻 **GitHub**: [Conflict Events Tagger Repository](https://github.com/GregXD/conflict-events-tagger)
-    - 📧 **Contact**: For questions, suggestions, or collaboration opportunities
-    """)
 
 def main():
     try:
