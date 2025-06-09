@@ -1317,7 +1317,7 @@ def main():
         </style>
         """, unsafe_allow_html=True)
         
-        pages = ["Data Entry", "Text Classifier", "Dashboard", "About"]
+        pages = ["About", "Data Entry", "Text Classifier", "Dashboard"]
         selection = st.sidebar.selectbox(
             "Go to", 
             pages,
