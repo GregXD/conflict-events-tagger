@@ -1,0 +1,12 @@
+{
+  "labels":[
+    "Battles",
+    "Explosions/Remote violence",
+    "Protests",
+    "Riots",
+    "Strategic developments",
+    "Violence against civilians"
+  ],
+  "threshold":0.0,
+  "positive_label":null
+}
